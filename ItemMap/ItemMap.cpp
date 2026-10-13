@@ -20,6 +20,13 @@ namespace GOTHIC_ENGINE {
 		this->printViewHelp = new zCView(0, 0, 0, 0);
 		this->printViewHelp->InsertBack(textureBackground.data());
 
+		this->printViewCursor = new zCView(0, 0, 0, 0);
+		this->printViewCursor->InsertBack(textureMarker.data());
+
+		this->printViewTooltip = new zCView(0, 0, 0, 0);
+		this->printViewTooltip->InsertBack(textureBackground.data());
+		this->printViewTooltip->SetAlphaBlendFunc(zTRnd_AlphaBlendFunc::zRND_ALPHA_FUNC_BLEND);
+
 		auto texturePlayerMark = zSTRING{ "L.TGA" };
 		zCTexture* temp = temp->Load(texturePlayerMark, True);
 		if (temp)
@@ -41,6 +48,11 @@ namespace GOTHIC_ENGINE {
 		this->RememberSearchInput = true;
 		this->ShowFilteredStaticColor = false;
 		this->TransparentPanels = false;
+
+		this->EnableMouse = true;
+		this->MouseSpeed = 1.0f;
+		this->mouseX = 0.0f;
+		this->mouseY = 0.0f;
 
 		this->search = L"";
 		this->searchStringSeparator = "|";
@@ -86,6 +98,18 @@ namespace GOTHIC_ENGINE {
 		{
 			delete this->printViewFakeMap;
 			this->printViewFakeMap = 0;
+		}
+
+		if (this->printViewCursor)
+		{
+			delete this->printViewCursor;
+			this->printViewCursor = 0;
+		}
+
+		if (this->printViewTooltip)
+		{
+			delete this->printViewTooltip;
+			this->printViewTooltip = 0;
 		}
 
 		this->ClearPrintItems();
@@ -151,6 +175,10 @@ namespace GOTHIC_ENGINE {
 		this->searchStringSeparator = string{ zoptions->ReadString(PluginName.data(), "SearchStringSeparator", this->searchStringSeparator) };
 
 		this->NoMapHotkey = GetKey(zoptions->ReadString(PluginName.data(), "NoMapHotkey", "KEY_RBRACKET").ToChar());
+
+		this->EnableMouse = zoptions->ReadBool(PluginName.data(), "EnableMouse", True);
+		this->MouseSpeed = std::clamp(zoptions->ReadReal(PluginName.data(), "MouseSpeed", 1.0f), 0.1f, 10.0f);
+		this->colorMouseCursor = this->HexToColor(zoptions->ReadString(PluginName.data(), "ColorMouseCursor", "#FFFFFF").ToChar());
 	}
 
 	zCOLOR ItemMap::HexToColor(std::string_view hexstring)
@@ -744,6 +772,298 @@ namespace GOTHIC_ENGINE {
 		screen->RemoveItem(this->printViewHelp);
 	}
 
+	void ItemMap::PrintCursor()
+	{
+		if (!this->EnableMouse)
+		{
+			return;
+		}
+
+		int x = screen->anx(static_cast<int>(this->mouseX));
+		int y = screen->any(static_cast<int>(this->mouseY));
+
+		// Black outline with a colored center, so the cursor stands out from markers of the same color
+		int outerSize = std::max(this->imgSize, 10) + 6;
+		int innerSize = outerSize - 4;
+
+		screen->InsertItem(this->printViewCursor);
+
+		this->printViewCursor->SetSize(screen->anx(outerSize), screen->any(outerSize));
+		this->printViewCursor->SetPos(x - (screen->anx(outerSize) / 2), y - (screen->any(outerSize) / 2));
+		this->printViewCursor->SetColor(GFX_BLACK);
+		this->printViewCursor->Blit();
+
+		this->printViewCursor->SetSize(screen->anx(innerSize), screen->any(innerSize));
+		this->printViewCursor->SetPos(x - (screen->anx(innerSize) / 2), y - (screen->any(innerSize) / 2));
+		this->printViewCursor->SetColor(this->colorMouseCursor);
+		this->printViewCursor->Blit();
+
+		screen->RemoveItem(this->printViewCursor);
+	}
+
+	float ItemMap::GetMarkerHitRadius() const
+	{
+		// Hit radius in pixels: half of the marker size, with a minimum so small markers are still easy to hover
+		return std::max(this->imgSize / 2.0f, 4.0f) + 1.0f;
+	}
+
+	std::vector<zSTRING> ItemMap::GetMarkerNameLines(const std::vector<PrintItem*>& items, size_t maxLines) const
+	{
+		// Group markers with the same name (e.g. many items in one chest), keeping the order of items
+		std::vector<std::pair<zSTRING, int>> names;
+		for (auto printItem : items)
+		{
+			const auto& name = printItem->name.IsEmpty() ? printItem->instancename : printItem->name;
+
+			auto it = std::find_if(names.begin(), names.end(), [&name](const auto& entry) {
+				return entry.first.Compare(name);
+				});
+
+			if (it != names.end())
+			{
+				it->second++;
+			}
+			else
+			{
+				names.emplace_back(name, 1);
+			}
+		}
+
+		std::vector<zSTRING> lines;
+		size_t shown = names.size() > maxLines ? maxLines - 1 : names.size();
+		for (size_t i = 0; i < shown; i++)
+		{
+			if (names[i].second > 1)
+			{
+				lines.push_back(zSTRING{ std::format("{0} x{1}", names[i].first.ToChar(), names[i].second).c_str() });
+			}
+			else
+			{
+				lines.push_back(names[i].first);
+			}
+		}
+
+		if (shown < names.size())
+		{
+			lines.push_back(zSTRING{ std::format("... and {} more", names.size() - shown).c_str() });
+		}
+
+		return lines;
+	}
+
+	void ItemMap::MeasureTextBox(std::vector<zSTRING>& lines, int& SizeX, int& SizeY) const
+	{
+		// Measure with the screen font so sizes are in screen virtual coordinates
+		int fontHeight = screen->FontY();
+		int textWidth = 0;
+		for (auto& line : lines)
+		{
+			textWidth = std::max(textWidth, screen->FontSize(line));
+		}
+
+		SizeX = textWidth + (screen->anx(TextBoxPadX) * 2);
+		SizeY = (fontHeight * static_cast<int>(lines.size())) + (screen->any(TextBoxPadY) * 2);
+	}
+
+	void ItemMap::PrintTextBox(std::vector<zSTRING>& lines, int TopX, int TopY, int SizeX, int SizeY)
+	{
+		int fontHeight = screen->FontY();
+		int padX = screen->anx(TextBoxPadX);
+		int padY = screen->any(TextBoxPadY);
+
+		this->printViewTooltip->ClrPrintwin();
+		this->printViewTooltip->SetFont(screen->GetFontName());
+		screen->InsertItem(this->printViewTooltip);
+		this->printViewTooltip->SetPos(TopX, TopY);
+		this->printViewTooltip->SetSize(SizeX, SizeY);
+		this->printViewTooltip->SetTransparency(this->TransparentPanels ? 128 : 255);
+		this->printViewTooltip->SetFontColor(GFX_WHITE);
+
+		// Text positions inside the view are relative to its own 0-8192 space
+		for (size_t i = 0; i < lines.size(); i++)
+		{
+			int x = (padX * 8192) / SizeX;
+			int y = ((padY + (fontHeight * static_cast<int>(i))) * 8192) / SizeY;
+			this->printViewTooltip->Print(x, y, lines[i]);
+		}
+
+		this->printViewTooltip->Blit();
+		screen->RemoveItem(this->printViewTooltip);
+	}
+
+	bool ItemMap::IsShowAllLabels() const
+	{
+		// SHIFT is also used for typing in the search bar, so ignore it there
+		return this->ShowMarkers && !this->SearchBarActive && (GetKeyState(VK_SHIFT) & 0x8000);
+	}
+
+	void ItemMap::PrintTooltip()
+	{
+		if (!this->EnableMouse || !this->ShowMarkers)
+		{
+			return;
+		}
+
+		float radius = this->GetMarkerHitRadius();
+		float radiusSq = radius * radius;
+
+		std::vector<std::pair<float, PrintItem*>> hovered;
+		for (auto printItem : this->vecPrintItemsCurrent)
+		{
+			float dx = static_cast<float>(screen->nax(printItem->pos.X)) - this->mouseX;
+			float dy = static_cast<float>(screen->nay(printItem->pos.Y)) - this->mouseY;
+			float distSq = dx * dx + dy * dy;
+
+			if (distSq <= radiusSq)
+			{
+				hovered.emplace_back(distSq, printItem);
+			}
+		}
+
+		if (hovered.empty())
+		{
+			return;
+		}
+
+		// Nearest first
+		std::stable_sort(hovered.begin(), hovered.end(), [](const auto& left, const auto& right) {
+			return left.first < right.first;
+			});
+
+		std::vector<PrintItem*> items;
+		items.reserve(hovered.size());
+		for (auto& [distSq, printItem] : hovered)
+		{
+			items.push_back(printItem);
+		}
+
+		auto lines = this->GetMarkerNameLines(items, TooltipMaxLines);
+
+		int SizeX, SizeY;
+		this->MeasureTextBox(lines, SizeX, SizeY);
+
+		int cursorX = screen->anx(static_cast<int>(this->mouseX));
+		int cursorY = screen->any(static_cast<int>(this->mouseY));
+		int offsetX = screen->anx(16);
+		int offsetY = screen->any(16);
+
+		// Place tooltip bottom-right of the cursor, flip to the other side near screen edges
+		int TopX = cursorX + offsetX;
+		if (TopX + SizeX > 8192)
+		{
+			TopX = cursorX - offsetX - SizeX;
+		}
+
+		int TopY = cursorY + offsetY;
+		if (TopY + SizeY > 8192)
+		{
+			TopY = cursorY - offsetY - SizeY;
+		}
+
+		TopX = std::clamp(TopX, 0, std::max(0, 8192 - SizeX));
+		TopY = std::clamp(TopY, 0, std::max(0, 8192 - SizeY));
+
+		this->PrintTextBox(lines, TopX, TopY, SizeX, SizeY);
+	}
+
+	void ItemMap::PrintAllLabels()
+	{
+		if (!this->IsShowAllLabels())
+		{
+			return;
+		}
+
+		// Cluster markers that overlap on screen (e.g. all items in one chest), so each spot gets a single label
+		float radius = this->GetMarkerHitRadius();
+		float cellSize = radius * 2.0f;
+
+		std::map<std::pair<int, int>, size_t> cells;
+		std::vector<std::vector<PrintItem*>> clusters;
+		for (auto printItem : this->vecPrintItemsCurrent)
+		{
+			auto cell = std::make_pair(
+				static_cast<int>(std::floor(screen->nax(printItem->pos.X) / cellSize)),
+				static_cast<int>(std::floor(screen->nay(printItem->pos.Y) / cellSize))
+			);
+
+			auto [it, inserted] = cells.try_emplace(cell, clusters.size());
+			if (inserted)
+			{
+				clusters.emplace_back();
+			}
+
+			clusters[it->second].push_back(printItem);
+		}
+
+		struct LabelRect
+		{
+			int x, y, sx, sy;
+
+			bool Overlaps(const LabelRect& other) const
+			{
+				return x < other.x + other.sx && other.x < x + sx && y < other.y + other.sy && other.y < y + sy;
+			}
+
+			bool OnScreen() const
+			{
+				return x >= 0 && y >= 0 && x + sx <= 8192 && y + sy <= 8192;
+			}
+		};
+
+		std::vector<LabelRect> placed;
+		placed.reserve(clusters.size());
+
+		int gapX = screen->anx(static_cast<int>(radius) + 2);
+		int gapY = screen->any(static_cast<int>(radius) + 2);
+
+		for (auto& cluster : clusters)
+		{
+			// Anchor label at the center of the clustered markers
+			long long sumX = 0, sumY = 0;
+			for (auto printItem : cluster)
+			{
+				sumX += printItem->pos.X;
+				sumY += printItem->pos.Y;
+			}
+
+			int centerX = static_cast<int>(sumX / static_cast<long long>(cluster.size()));
+			int centerY = static_cast<int>(sumY / static_cast<long long>(cluster.size()));
+
+			auto lines = this->GetMarkerNameLines(cluster, LabelMaxLines);
+
+			int SizeX, SizeY;
+			this->MeasureTextBox(lines, SizeX, SizeY);
+
+			// Try right, left, below and above the marker - take the first spot that does not cover an earlier label
+			const LabelRect candidates[] = {
+				{ centerX + gapX, centerY - (SizeY / 2), SizeX, SizeY },
+				{ centerX - gapX - SizeX, centerY - (SizeY / 2), SizeX, SizeY },
+				{ centerX - (SizeX / 2), centerY + gapY, SizeX, SizeY },
+				{ centerX - (SizeX / 2), centerY - gapY - SizeY, SizeX, SizeY }
+			};
+
+			LabelRect rect = candidates[0];
+			for (const auto& candidate : candidates)
+			{
+				bool free = std::none_of(placed.begin(), placed.end(), [&candidate](const auto& other) {
+					return candidate.Overlaps(other);
+					});
+
+				if (candidate.OnScreen() && free)
+				{
+					rect = candidate;
+					break;
+				}
+			}
+
+			rect.x = std::clamp(rect.x, 0, std::max(0, 8192 - rect.sx));
+			rect.y = std::clamp(rect.y, 0, std::max(0, 8192 - rect.sy));
+			placed.push_back(rect);
+
+			this->PrintTextBox(lines, rect.x, rect.y, rect.sx, rect.sy);
+		}
+	}
+
 	void ItemMap::Print()
 	{
 		if (ogame->singleStep || ogame->pause_screen)
@@ -758,13 +1078,22 @@ namespace GOTHIC_ENGINE {
 
 		this->PrintPlayerIcon();
 		this->PrintMarkers();
+		this->PrintAllLabels();
 		this->PrintList();
 		this->PrintSearchBar();
 		this->PrintHelp();
+		this->PrintTooltip();
+		this->PrintCursor();
 
 		int ScreenX, ScreenY, ScreenSX, ScreenSY;
 		screen->GetViewport(ScreenX, ScreenY, ScreenSX, ScreenSY);
 		zrenderer->SetViewport(ScreenX, ScreenY, ScreenSX, ScreenSY);
+	}
+
+	zSTRING ItemMap::GetItemName(oCItem* item) const
+	{
+		// name is often only the generic type (e.g. "Potion", "Ring", "Scroll") - description holds the specific name
+		return item->description.IsEmpty() ? item->name : item->description;
 	}
 
 	void ItemMap::AddPrintItem(oCItem* item, zPOS pos, ItemMapGroundLevel groundlevel)
@@ -772,7 +1101,7 @@ namespace GOTHIC_ENGINE {
 		auto flags = this->GetFilterFlagItems(item);
 		auto color = this->GetColor(flags);
 
-		this->vecItemsAll.push_back(new PrintItem(pos, color, item->name, item->GetInstanceName(), flags, groundlevel));
+		this->vecItemsAll.push_back(new PrintItem(pos, color, this->GetItemName(item), item->GetInstanceName(), flags, groundlevel));
 
 		for (auto it : this->vecItemsUniqueAll)
 		{
@@ -782,7 +1111,7 @@ namespace GOTHIC_ENGINE {
 				return;
 			}
 		}
-		this->vecItemsUniqueAll.push_back(new PrintItemUnique(item->instanz, item->name, item->GetInstanceName(), 1, item->amount, flags));
+		this->vecItemsUniqueAll.push_back(new PrintItemUnique(item->instanz, this->GetItemName(item), item->GetInstanceName(), 1, item->amount, flags));
 	}
 
 	void ItemMap::AddPrintNpc(oCNpc* npc, zPOS pos, ItemMapGroundLevel groundlevel)
@@ -854,7 +1183,7 @@ namespace GOTHIC_ENGINE {
 
 	void ItemMap::AddPrintItemInNpc(oCItem* item, zPOS pos, ItemMapGroundLevel groundlevel, zCOLOR color)
 	{
-		this->vecItemsInNpcsAll.push_back(new PrintItem(pos, color, item->name, item->GetInstanceName(), 0, groundlevel));
+		this->vecItemsInNpcsAll.push_back(new PrintItem(pos, color, this->GetItemName(item), item->GetInstanceName(), 0, groundlevel));
 
 		for (auto it : this->vecItemsInNpcsUniqueAll)
 		{
@@ -864,7 +1193,7 @@ namespace GOTHIC_ENGINE {
 				return;
 			}
 		}
-		this->vecItemsInNpcsUniqueAll.push_back(new PrintItemUnique(item->instanz, item->name, item->GetInstanceName(), 1, item->amount, 0));
+		this->vecItemsInNpcsUniqueAll.push_back(new PrintItemUnique(item->instanz, this->GetItemName(item), item->GetInstanceName(), 1, item->amount, 0));
 	}
 
 	void ItemMap::AddPrintInteractive(oCMobInter* inter, zPOS pos, ItemMapGroundLevel groundlevel)
@@ -918,7 +1247,7 @@ namespace GOTHIC_ENGINE {
 
 	void ItemMap::AddPrintItemInContainer(oCItem* item, zPOS pos, ItemMapGroundLevel groundlevel, zCOLOR color)
 	{
-		this->vecItemsInContainersAll.push_back(new PrintItem(pos, color, item->name, item->GetInstanceName(), 0, groundlevel));
+		this->vecItemsInContainersAll.push_back(new PrintItem(pos, color, this->GetItemName(item), item->GetInstanceName(), 0, groundlevel));
 
 		for (auto it : this->vecItemsInContainersUniqueAll)
 		{
@@ -928,7 +1257,7 @@ namespace GOTHIC_ENGINE {
 				return;
 			}
 		}
-		this->vecItemsInContainersUniqueAll.push_back(new PrintItemUnique(item->instanz, item->name, item->GetInstanceName(), 1, item->amount, 0));
+		this->vecItemsInContainersUniqueAll.push_back(new PrintItemUnique(item->instanz, this->GetItemName(item), item->GetInstanceName(), 1, item->amount, 0));
 	}
 
 	void ItemMap::AddPrintContainer(oCMobContainer* container, zPOS pos, ItemMapGroundLevel groundlevel)
@@ -1147,6 +1476,8 @@ namespace GOTHIC_ENGINE {
 			return;
 		}
 
+		this->UpdateMouse();
+
 		if ((zKeyToggled(KEY_RETURN) || zKeyToggled(KEY_NUMPADENTER)) && this->ShowSearchBar)
 		{
 			this->SearchBarActive = !this->SearchBarActive;
@@ -1350,6 +1681,54 @@ namespace GOTHIC_ENGINE {
 		}
 
 		return;
+	}
+
+	void ItemMap::ResetMouse()
+	{
+		// mapCoords are in screen pixels
+		this->mouseX = (this->mapCoords[0] + this->mapCoords[2]) / 2.0f;
+		this->mouseY = (this->mapCoords[1] + this->mapCoords[3]) / 2.0f;
+	}
+
+	void ItemMap::UpdateMouse()
+	{
+		if (!this->EnableMouse)
+		{
+			return;
+		}
+
+		// Game reads the mouse through DirectInput, so the system cursor does not move - accumulate relative movement instead
+		float dx = 0.0f, dy = 0.0f, dz = 0.0f;
+		zinput->GetMousePos(dx, dy, dz);
+
+		// Undo in-game mouse sensitivity and axis inversion, so cursor speed is independent of camera settings
+		float sensX = 0.0f, sensY = 0.0f;
+		zinput->GetMouseSensitivity(sensX, sensY);
+		if (sensX > 0.0f)
+		{
+			dx /= sensX;
+		}
+		if (sensY > 0.0f)
+		{
+			dy /= sensY;
+		}
+
+		int flipX = False, flipY = False;
+		zinput->GetMouseFlipXY(flipX, flipY);
+		if (flipX)
+		{
+			dx = -dx;
+		}
+		if (flipY)
+		{
+			dy = -dy;
+		}
+
+		auto maxX = static_cast<float>(screen->nax(8192) - 1);
+		auto maxY = static_cast<float>(screen->nay(8192) - 1);
+
+		this->mouseX = std::clamp(this->mouseX + (dx * MouseBaseSpeed * this->MouseSpeed), 0.0f, maxX);
+		this->mouseY = std::clamp(this->mouseY + (dy * MouseBaseSpeed * this->MouseSpeed), 0.0f, maxY);
 	}
 
 	bool ItemMap::TryInitMap(oCViewDocument* document)
@@ -1613,6 +1992,7 @@ namespace GOTHIC_ENGINE {
 		this->Hook = hook;
 		this->listPage = 0;
 		this->listPageMax = 0;
+		this->ResetMouse();
 		//player->SetMovLock(TRUE);
 
 		float playerPosY = player->GetPositionWorld()[VY];

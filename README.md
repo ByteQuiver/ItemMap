@@ -9,6 +9,8 @@
 - Show markers on map for interactive objects that have a function
 - Show list of all unique objects and their total amount
 - Search for specific object by name or instance
+- Mouse cursor on map - hover over a marker to see its name (stacked markers are grouped, e.g. all items in one chest)
+- Hold `SHIFT` on the map to show the names of all displayed markers at once, so you can find what you are looking for at a glance
 - Fake Map mode to use in locations that do not have an actual in-game map. By default accessed by `SHIFT + ]`. Secondary key (`]` - right bracket) can be changed in Gothic.ini.
 
 ## Screenshots
@@ -203,4 +205,16 @@ SearchStringSeparator=|
 NoMapHotkey=KEY_RBRACKET
 ;
 ; Secondary key used to open Fake Map mode
+
+EnableMouse=1
+;
+; Show mouse cursor on map; hovering over a marker shows its name [default: 1]
+
+MouseSpeed=1.0
+;
+; Mouse cursor speed multiplier (0.1 - 10.0) [default: 1.0]
+
+ColorMouseCursor=#FFFFFF
+;
+; Color of the mouse cursor [default: #FFFFFF]
 ```

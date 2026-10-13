@@ -205,7 +205,13 @@ namespace GOTHIC_ENGINE
 		enumFilter = static_cast<EnumType>(filter);
 	}
 
-	static constexpr size_t HelpMax = 15;
+	static constexpr size_t TooltipMaxLines = 15;
+	static constexpr float MouseBaseSpeed = 1.0f;
+	static constexpr size_t LabelMaxLines = 3; // per label when SHIFT shows all labels
+	static constexpr int TextBoxPadX = 8; // tooltip/label padding in pixels
+	static constexpr int TextBoxPadY = 4;
+
+	static constexpr size_t HelpMax = 17;
 	static constexpr std::string_view Help[HelpMax] = {
 		"MAP KEY, ESC - Close map",
 		"TAB - On/Off Transparency of panels (search and list)",
@@ -221,7 +227,9 @@ namespace GOTHIC_ENGINE
 		"Arrow Left/Right - Change filter",
 		"Arrow Up/Down - Change page on list (if visible)",
 		"CTRL + Arrow Up/Down - Change marker size (if visible)",
-		"CTRL + Arrow Left/Right - Change list width (if visible)"
+		"CTRL + Arrow Left/Right - Change list width (if visible)",
+		"Mouse - Hover over a marker to show its name",
+		"SHIFT (hold) - Show names of all markers on the map"
 	};
 
 	struct PrintItem
@@ -316,6 +324,17 @@ namespace GOTHIC_ENGINE
 		void PrintSearchBar();
 		void PrintHelp();
 		void PrintPlayerIcon();
+		void PrintCursor();
+		void PrintTooltip();
+		void PrintAllLabels();
+		zSTRING GetItemName(oCItem* item) const;
+		bool IsShowAllLabels() const;
+		float GetMarkerHitRadius() const;
+		std::vector<zSTRING> GetMarkerNameLines(const std::vector<PrintItem*>& items, size_t maxLines) const;
+		void MeasureTextBox(std::vector<zSTRING>& lines, int& SizeX, int& SizeY) const;
+		void PrintTextBox(std::vector<zSTRING>& lines, int TopX, int TopY, int SizeX, int SizeY);
+		void UpdateMouse();
+		void ResetMouse();
 		std::vector<PrintItem*>& GetCurrentVectorAll();
 		std::vector<PrintItemUnique*>& GetCurrentVectorUniques();
 		zSTRING GetFilterName() const;
@@ -327,6 +346,8 @@ namespace GOTHIC_ENGINE
 		zCView* printViewList;
 		zCView* printViewSearchBar;
 		zCView* printViewHelp;
+		zCView* printViewCursor;
+		zCView* printViewTooltip;
 
 		std::vector<PrintItem*> vecItemsAll;
 		std::vector<PrintItemUnique*> vecItemsUniqueAll;
@@ -359,6 +380,12 @@ namespace GOTHIC_ENGINE
 		bool RememberSearchInput;
 
 		bool TransparentPanels;
+
+		bool EnableMouse;
+		float MouseSpeed;
+		zCOLOR colorMouseCursor;
+		float mouseX; // cursor position in screen pixels
+		float mouseY;
 
 		int NPC_TYPE_FRIEND;
 
