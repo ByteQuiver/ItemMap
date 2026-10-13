@@ -194,6 +194,14 @@ namespace GOTHIC_ENGINE
 		"#00FF00"
 	};
 
+	enum class SearchBarHit : size_t
+	{
+		NONE,
+		BAR,
+		PREV_FILTER,
+		NEXT_FILTER
+	};
+
 	template<FilterOperation op>
 	void CheckFilterRange(auto& enumFilter)
 	{
@@ -211,7 +219,7 @@ namespace GOTHIC_ENGINE
 	static constexpr int TextBoxPadX = 8; // tooltip/label padding in pixels
 	static constexpr int TextBoxPadY = 4;
 
-	static constexpr size_t HelpMax = 17;
+	static constexpr size_t HelpMax = 18;
 	static constexpr std::string_view Help[HelpMax] = {
 		"MAP KEY, ESC - Close map",
 		"TAB - On/Off Transparency of panels (search and list)",
@@ -229,6 +237,7 @@ namespace GOTHIC_ENGINE
 		"CTRL + Arrow Up/Down - Change marker size (if visible)",
 		"CTRL + Arrow Left/Right - Change list width (if visible)",
 		"Mouse - Hover over a marker to show its name",
+		"Mouse click - Search bar to type, << / >> to change filter",
 		"SHIFT (hold) - Show names of all markers on the map"
 	};
 
@@ -335,6 +344,11 @@ namespace GOTHIC_ENGINE
 		void PrintTextBox(std::vector<zSTRING>& lines, int TopX, int TopY, int SizeX, int SizeY);
 		void UpdateMouse();
 		void ResetMouse();
+		void HandleMouseClick(bool& refresh);
+		void GetSearchBarRect(int& TopX, int& TopY, int& SizeX, int& SizeY);
+		SearchBarHit GetSearchBarHit();
+		bool CanChangeFilter(FilterOperation op) const;
+		void ChangeFilter(FilterOperation op);
 		std::vector<PrintItem*>& GetCurrentVectorAll();
 		std::vector<PrintItemUnique*>& GetCurrentVectorUniques();
 		zSTRING GetFilterName() const;

@@ -10,7 +10,8 @@
 - Show list of all unique objects and their total amount
 - Search for specific object by name or instance
 - Mouse cursor on map - hover over a marker to see its name (stacked markers are grouped, e.g. all items in one chest)
-- Hold `SHIFT` on the map to show the names of all displayed markers at once, so you can find what you are looking for at a glance
+- Click the search bar to start typing, or click the `<<` / `>>` arrows to change the filter category
+- Hold `SHIFT` on the map to show the names of all displayed markers at once
 - Fake Map mode to use in locations that do not have an actual in-game map. By default accessed by `SHIFT + ]`. Secondary key (`]` - right bracket) can be changed in Gothic.ini.
 
 ## Screenshots

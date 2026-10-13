@@ -28,7 +28,7 @@ namespace GOTHIC_ENGINE {
 		this->printViewTooltip->SetAlphaBlendFunc(zTRnd_AlphaBlendFunc::zRND_ALPHA_FUNC_BLEND);
 
 		auto texturePlayerMark = zSTRING{ "L.TGA" };
-		zCTexture* temp = temp->Load(texturePlayerMark, True);
+		zCTexture* temp = zCTexture::Load(texturePlayerMark, True);
 		if (temp)
 		{
 			temp->GetPixelSize(this->markX, this->markY);
@@ -653,10 +653,7 @@ namespace GOTHIC_ENGINE {
 		this->printViewSearchBar->ClrPrintwin();
 
 		int TopX, TopY, SizeX, SizeY;
-		TopX = std::clamp(screen->anx(static_cast<int>(this->mapCoords[0]) + ((static_cast<int>(this->mapCoords[2]) - static_cast<int>(this->mapCoords[0])) / 2)) - 200, 0, 8192);
-		TopY = std::clamp(screen->any(static_cast<int>(this->mapCoords[1])) + 300, 0, 8192);
-		SizeX = screen->anx(static_cast<int>(this->mapCoords[2]) - static_cast<int>(this->mapCoords[0])) / 2;
-		SizeY = screen->FontY() * 3;
+		this->GetSearchBarRect(TopX, TopY, SizeX, SizeY);
 
 		screen->InsertItem(this->printViewSearchBar);
 		this->printViewSearchBar->SetPos(TopX, TopY);
@@ -677,25 +674,23 @@ namespace GOTHIC_ENGINE {
 		this->printViewSearchBar->SetFontColor(GFX_COLDGREY);
 
 		auto txtSearchFilter = this->GetFilterName();
+		auto hit = this->GetSearchBarHit();
 
-		if ((this->mode == ItemMapMode::ITEMS && this->filterItems > static_cast<ItemMapFilterItems>(0))
-			|| (this->mode == ItemMapMode::NPCS && this->filterNpcs > static_cast<ItemMapFilterNpcs>(0))
-			|| (this->mode == ItemMapMode::CONTAINERS && this->filterContainers > static_cast<ItemMapFilterContainers>(0))
-			)
+		if (this->CanChangeFilter(FilterOperation::DECREMENT))
 		{
 			auto less = zSTRING{ "<<" };
+			this->printViewSearchBar->SetFontColor(hit == SearchBarHit::PREV_FILTER ? GFX_WHITE : GFX_COLDGREY);
 			this->printViewSearchBar->Print(0, y, less);
 		}
 
-		if ((this->mode == ItemMapMode::ITEMS && this->filterItems < ItemMapFilterItems::ALL)
-			|| (this->mode == ItemMapMode::NPCS && this->filterNpcs < ItemMapFilterNpcs::ALL)
-			|| (this->mode == ItemMapMode::CONTAINERS && this->filterContainers < ItemMapFilterContainers::ALL)
-			)
+		if (this->CanChangeFilter(FilterOperation::INCREMENT))
 		{
 			auto more = zSTRING{ ">>" };
+			this->printViewSearchBar->SetFontColor(hit == SearchBarHit::NEXT_FILTER ? GFX_WHITE : GFX_COLDGREY);
 			this->printViewSearchBar->Print(8192 - this->printViewSearchBar->FontSize(more), y, more);
 		}
 
+		this->printViewSearchBar->SetFontColor(GFX_COLDGREY);
 		int txtSearchFilterWidth = this->printViewSearchBar->FontSize(txtSearchFilter);
 		this->printViewSearchBar->Print(0 + (8192 / 2) - (txtSearchFilterWidth / 2), fontHeight * y++, txtSearchFilter);
 
@@ -705,7 +700,7 @@ namespace GOTHIC_ENGINE {
 
 		if (this->search.IsEmpty() && !this->SearchBarActive)
 		{
-			auto txtSearchPlaceholder = zSTRING{ "Press ENTER to search" };
+			auto txtSearchPlaceholder = zSTRING{ this->EnableMouse ? "Press ENTER or click here to search" : "Press ENTER to search" };
 			this->printViewSearchBar->SetFontColor(GFX_PINK);
 			this->printViewSearchBar->Print(0, fontHeight * y++, txtSearchPlaceholder);
 		}
@@ -1477,6 +1472,7 @@ namespace GOTHIC_ENGINE {
 		}
 
 		this->UpdateMouse();
+		this->HandleMouseClick(refresh);
 
 		if ((zKeyToggled(KEY_RETURN) || zKeyToggled(KEY_NUMPADENTER)) && this->ShowSearchBar)
 		{
@@ -1515,18 +1511,7 @@ namespace GOTHIC_ENGINE {
 			}
 			else if (!ctrl)
 			{
-				if (this->mode == ItemMapMode::ITEMS)
-				{
-					CheckFilterRange<FilterOperation::INCREMENT>(this->filterItems);
-				}
-				else if (this->mode == ItemMapMode::NPCS)
-				{
-					CheckFilterRange<FilterOperation::INCREMENT>(this->filterNpcs);
-				}
-				else if (this->mode == ItemMapMode::CONTAINERS)
-				{
-					CheckFilterRange<FilterOperation::INCREMENT>(this->filterContainers);
-				}
+				this->ChangeFilter(FilterOperation::INCREMENT);
 				refresh = true;
 			}
 		}
@@ -1539,18 +1524,7 @@ namespace GOTHIC_ENGINE {
 			}
 			else if (!ctrl)
 			{
-				if (this->mode == ItemMapMode::ITEMS)
-				{
-					CheckFilterRange<FilterOperation::DECREMENT>(this->filterItems);
-				}
-				else if (this->mode == ItemMapMode::NPCS)
-				{
-					CheckFilterRange<FilterOperation::DECREMENT>(this->filterNpcs);
-				}
-				else if (this->mode == ItemMapMode::CONTAINERS)
-				{
-					CheckFilterRange<FilterOperation::DECREMENT>(this->filterContainers);
-				}
+				this->ChangeFilter(FilterOperation::DECREMENT);
 				refresh = true;
 			}
 		}
@@ -1729,6 +1703,116 @@ namespace GOTHIC_ENGINE {
 
 		this->mouseX = std::clamp(this->mouseX + (dx * MouseBaseSpeed * this->MouseSpeed), 0.0f, maxX);
 		this->mouseY = std::clamp(this->mouseY + (dy * MouseBaseSpeed * this->MouseSpeed), 0.0f, maxY);
+	}
+
+	void ItemMap::HandleMouseClick(bool& refresh)
+	{
+		// Always poll, so the toggle state stays in sync even while the click does nothing
+		bool clicked = zinput->GetMouseButtonToggledLeft();
+
+		if (!this->EnableMouse || !clicked)
+		{
+			return;
+		}
+
+		switch (this->GetSearchBarHit())
+		{
+		case SearchBarHit::PREV_FILTER:
+			this->ChangeFilter(FilterOperation::DECREMENT);
+			refresh = true;
+			break;
+		case SearchBarHit::NEXT_FILTER:
+			this->ChangeFilter(FilterOperation::INCREMENT);
+			refresh = true;
+			break;
+		case SearchBarHit::BAR:
+			this->SearchBarActive = true;
+			break;
+		case SearchBarHit::NONE:
+			// Clicking anywhere else stops typing
+			this->SearchBarActive = false;
+			break;
+		}
+	}
+
+	void ItemMap::GetSearchBarRect(int& TopX, int& TopY, int& SizeX, int& SizeY)
+	{
+		TopX = std::clamp(screen->anx(static_cast<int>(this->mapCoords[0]) + ((static_cast<int>(this->mapCoords[2]) - static_cast<int>(this->mapCoords[0])) / 2)) - 200, 0, 8192);
+		TopY = std::clamp(screen->any(static_cast<int>(this->mapCoords[1])) + 300, 0, 8192);
+		SizeX = screen->anx(static_cast<int>(this->mapCoords[2]) - static_cast<int>(this->mapCoords[0])) / 2;
+		SizeY = screen->FontY() * 3;
+	}
+
+	SearchBarHit ItemMap::GetSearchBarHit()
+	{
+		if (!this->EnableMouse || !this->ShowSearchBar)
+		{
+			return SearchBarHit::NONE;
+		}
+
+		int TopX, TopY, SizeX, SizeY;
+		this->GetSearchBarRect(TopX, TopY, SizeX, SizeY);
+
+		int x = screen->anx(static_cast<int>(this->mouseX));
+		int y = screen->any(static_cast<int>(this->mouseY));
+
+		if (x < TopX || x > TopX + SizeX || y < TopY || y > TopY + SizeY)
+		{
+			return SearchBarHit::NONE;
+		}
+
+		// Arrows sit on the first line, at both ends - make their hit area wider than the text so they are easy to click
+		if (y < TopY + screen->FontY())
+		{
+			int arrowWidth = screen->FontSize(zSTRING{ "<<" }) * 2;
+
+			if (x < TopX + arrowWidth && this->CanChangeFilter(FilterOperation::DECREMENT))
+			{
+				return SearchBarHit::PREV_FILTER;
+			}
+
+			if (x > TopX + SizeX - arrowWidth && this->CanChangeFilter(FilterOperation::INCREMENT))
+			{
+				return SearchBarHit::NEXT_FILTER;
+			}
+		}
+
+		return SearchBarHit::BAR;
+	}
+
+	bool ItemMap::CanChangeFilter(FilterOperation op) const
+	{
+		bool increment = op == FilterOperation::INCREMENT;
+
+		switch (this->mode)
+		{
+		case ItemMapMode::ITEMS:
+			return increment ? this->filterItems < ItemMapFilterItems::ALL : this->filterItems > static_cast<ItemMapFilterItems>(0);
+		case ItemMapMode::NPCS:
+			return increment ? this->filterNpcs < ItemMapFilterNpcs::ALL : this->filterNpcs > static_cast<ItemMapFilterNpcs>(0);
+		case ItemMapMode::CONTAINERS:
+			return increment ? this->filterContainers < ItemMapFilterContainers::ALL : this->filterContainers > static_cast<ItemMapFilterContainers>(0);
+		}
+
+		return false;
+	}
+
+	void ItemMap::ChangeFilter(FilterOperation op)
+	{
+		bool increment = op == FilterOperation::INCREMENT;
+
+		switch (this->mode)
+		{
+		case ItemMapMode::ITEMS:
+			increment ? CheckFilterRange<FilterOperation::INCREMENT>(this->filterItems) : CheckFilterRange<FilterOperation::DECREMENT>(this->filterItems);
+			break;
+		case ItemMapMode::NPCS:
+			increment ? CheckFilterRange<FilterOperation::INCREMENT>(this->filterNpcs) : CheckFilterRange<FilterOperation::DECREMENT>(this->filterNpcs);
+			break;
+		case ItemMapMode::CONTAINERS:
+			increment ? CheckFilterRange<FilterOperation::INCREMENT>(this->filterContainers) : CheckFilterRange<FilterOperation::DECREMENT>(this->filterContainers);
+			break;
+		}
 	}
 
 	bool ItemMap::TryInitMap(oCViewDocument* document)
